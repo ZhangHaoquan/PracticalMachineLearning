@@ -1,0 +1,121 @@
+---
+title: "Practical Machine Learning (Prediction Assessment)"
+author: "Zhang Haoquan"
+date: "Friday, March 20, 2015"
+output: html_document
+---
+
+The goal of this project is to predict the 'classe' variable. 
+
+
+## Download and Clean Data
+
+```{r, cache=TRUE, warning=FALSE}
+library('caret')
+library('plyr')
+library('rpart')
+library('lubridate')
+
+# Importing the data
+setInternet2(T)
+if(!file.exists('./training.csv'))
+  download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv','./training.csv',mode='wb')
+
+# Cleaning up the data using the condition [na.strings=c('','NA','#DIV/0!')]
+data <- read.csv('./training.csv',na.strings=c('','NA','#DIV/0!'))
+
+```
+
+## Seperate data into Training and Testing
+```{r, cache=TRUE, fig.height=5, fig.align='center', fig.width=10}
+inTrain  <- createDataPartition(y=data$classe, p=.7, list=FALSE)
+training <- data[inTrain,]
+testing  <- data[-inTrain,]
+
+# Notice that raw_timestamp_part_1 and raw_timestamp_part_2 does not seem to appear as meaningful predictor
+par(mfrow=c(1,2))
+boxplot(data$raw_timestamp_part_1/100~data$classe,main='raw_timestamp_part_1',ylab='timespan / 100')
+boxplot(data$raw_timestamp_part_2~data$classe,main='raw_timestamp_part_2', ylab='timespan')
+
+```
+
+## Reshape and Select Variables for Prediction
+
+```{r, cache=TRUE}
+prepData <- function(data){
+
+  # Take away X, raw_timestamp_part_1, raw_timestamp_part_2
+  data <- data[,-c(1,3,4)]
+	
+	# Reclassifying time to reflect qualitative properties such as weekday and hour of the day
+	data$cvtd_timestamp <- strptime(as.character(data$cvtd_timestamp),'%d/%m/%Y %H:%M')
+	data$cvtd_timestamp <- as.factor(paste(as.character(weekdays(data$cvtd_timestamp)),
+											   as.character(hour(data$cvtd_timestamp))))
+
+	# Separate numeric Vs non-Numeric to perform selection
+	numInd  <- !(names(data) %in% c('user_name','cvtd_timestamp','new_window','classe'))
+	data_nonNum <- data[,(!numInd)]
+	data_num    <- data[,(numInd)]
+	
+	# Removing columns with no variation
+	data_num    <- data_num[,!is.na(apply(data_num,2,var))]
+
+	# Scaling the remaining columns
+	data_num <- as.data.frame(scale(data_num))
+	
+	# return the processed data
+	cbind(data_num,data_nonNum)
+}
+```
+
+## Train and Perform 10-Kold Validation
+
+### Out-of-Sample Error
+In the train function, trControl with method 'cv' and number 10 will perform the 10-Fold Validation. It will first break the training set into 10 non-overlapping equal size sample. Then, it will leave 1 of the samples out and train on the rest. lastly, it will validate the accuracy against the sample that was left out. This whole process will be repeated for all 10 samples and the mean of all 10 accuracy rates will give an estimate of the out-of-sample error.
+
+### Tuning
+In the train function, tuneGrid specifies a set a parameters to be tested against during the model fitting. For K-th Nearest Neighbour (KNN), the tuning parameter is k, the number of neightbours. For rpart2 it is the depth of the tree. This is necessary for models with tuning parameters.
+
+### Model Selection
+There can be many classification models that one can try but i selected 2 out of the many to report. Based on the out-of-sample error, it seems that the k-th nearest neighbour method is the best. Also, based on the tunning results, the best parameter for k is 1. With our results. we conclude that the final model is 1-th nearest neighbour with expected accuracy of approximately 98.8%.
+
+
+```{r, cache=TRUE}
+training <- prepData(training)
+
+# Catalogue of methods : http://topepo.github.io/caret/bytag.html
+
+modFit_trees <- train(training$classe~.,method='rpart2',data=training,
+                 trControl=trainControl(method="cv", number=10), tuneGrid=expand.grid(.maxdepth = seq(1,30,2)))
+modFit_knn   <- train(training$classe~.,method='knn',data=training,
+                 trControl=trainControl(method="cv", number=10), tuneGrid=expand.grid(.k = seq(1,20,2)))
+
+modFit_trees
+modFit_knn
+```
+
+## Testing
+Here we display the confusion matrix for our final model tested against the testing set. The accuracy yield is expected.
+
+```{r, cache=TRUE}
+testing  <- prepData(testing)
+confusionMatrix(data=predict(modFit_knn,testing),testing$classe)
+```
+
+## Prediction
+This part of the code is used answer the 20 questions required for submission. They will not be printed for security reasons. 
+```{r}
+# if(!file.exists('./testing.csv'))
+#   download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv','./testing.csv', mode='wb')
+# 
+# pml_write_files = function(x){
+#   n = length(x)
+#   for(i in 1:n){
+#     filename = paste0("problem_id_",i,".txt")
+#     write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+#   }
+# }
+# challenge <- prepData(read.csv('./testing.csv',na.strings=c('','NA','#DIV/0!')))
+# pml_write_files(predict(modFit_knn,challenge))
+```
+
